@@ -14,27 +14,38 @@ st.set_page_config(
 )
 
 st.title("🌡️ 기온 예측기")
-st.caption("서울의 연평균기온 데이터를 이용해 연도에 따른 기온 변화를 살펴보고 회귀선으로 예상 기온을 확인합니다.")
+st.caption(
+    "서울의 연평균기온 데이터를 이용해 연도에 따른 기온 변화를 살펴보고 "
+    "회귀선으로 예상 기온을 확인합니다."
+)
 
 
 # ---------------------------------
 # 데이터 불러오기
 # ---------------------------------
-URL = "https://raw.githubusercontent.com/greatsong/modudata/bb860932644270ad1199f10d3e7670e30231bce4/data/seoul.csv"
+URL = (
+    "https://raw.githubusercontent.com/greatsong/modudata/"
+    "bb860932644270ad1199f10d3e7670e30231bce4/data/seoul.csv"
+)
 
 
 @st.cache_data
 def load_data():
     df = pd.read_csv(URL, encoding="utf-8-sig")
 
-    # 날짜 변환
-    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
+    df["날짜"] = pd.to_datetime(
+        df["날짜"],
+        errors="coerce"
+    )
 
-    # 숫자형 변환
-    df["평균기온"] = pd.to_numeric(df["평균기온"], errors="coerce")
+    df["평균기온"] = pd.to_numeric(
+        df["평균기온"],
+        errors="coerce"
+    )
 
-    # 결측값 제거
-    df = df.dropna(subset=["날짜", "평균기온"])
+    df = df.dropna(
+        subset=["날짜", "평균기온"]
+    )
 
     return df
 
@@ -58,76 +69,113 @@ yearly = (
 
 
 # ---------------------------------
-# 기준 기간 적용
-# 1. 2025년 이후 제외
-# 2. 관측일수가 300일 미만인 해 제외
+# 분석 대상 기간
+# 2025년 이후 제외
+# 관측일수 300일 미만 제외
 # ---------------------------------
 yearly = yearly[
-    (yearly["연도"] <= 2025) &
-    (yearly["관측일수"] >= 300)
+    (yearly["연도"] <= 2025)
+    & (yearly["관측일수"] >= 300)
 ].copy()
 
 yearly = yearly.sort_values("연도").reset_index(drop=True)
 
 
 # ---------------------------------
-# 회귀용 데이터
-# 독립변수 = 1908년부터 지난 연수
+# 독립변수
+# 1908년부터 지난 연수
 # ---------------------------------
 yearly["지난연수"] = yearly["연도"] - 1908
 
-x = yearly["지난연수"].to_numpy()
-y = yearly["평균기온"].to_numpy()
 
+# =================================================
+# 1. 전체 기간 회귀
+# =================================================
 
-# ---------------------------------
-# 선형 회귀
-# ---------------------------------
-slope, intercept = np.polyfit(x, y, 1)
+x_all = yearly["지난연수"].to_numpy()
+y_all = yearly["평균기온"].to_numpy()
 
-yearly["회귀예상기온"] = (
-    intercept + slope * yearly["지난연수"]
+slope_all, intercept_all = np.polyfit(
+    x_all,
+    y_all,
+    1
 )
 
+# 1년에 몇 도 변화하는가
+slope_all_per_year = slope_all
+
+# 100년에 몇 도 변화하는가
+slope_all_100 = slope_all_per_year * 100
+
 # 상관계수
-correlation = np.corrcoef(x, y)[0, 1]
+correlation = np.corrcoef(
+    x_all,
+    y_all
+)[0, 1]
+
+
+# =================================================
+# 2. 최근 20년 회귀
+# =================================================
+
+latest_year = int(yearly["연도"].max())
+
+recent_start_year = latest_year - 19
+
+recent20 = yearly[
+    yearly["연도"] >= recent_start_year
+].copy()
+
+x_recent = recent20["지난연수"].to_numpy()
+y_recent = recent20["평균기온"].to_numpy()
+
+slope_recent, intercept_recent = np.polyfit(
+    x_recent,
+    y_recent,
+    1
+)
+
+slope_recent_100 = slope_recent * 100
 
 
 # ---------------------------------
-# 회귀선에 사용할 연도 범위
-# 1908년부터 2025년까지
+# 회귀선 데이터
 # ---------------------------------
+
 regression_years = np.arange(
-    1908,
-    2026
+    start=1908,
+    stop=2026
 )
 
 regression_x = regression_years - 1908
 
-regression_temperature = (
-    intercept + slope * regression_x
+
+# 전체 기간 회귀선
+regression_all = (
+    intercept_all
+    + slope_all * regression_x
 )
 
-regression_df = pd.DataFrame({
-    "연도": regression_years,
-    "회귀예상기온": regression_temperature
-})
+
+# 최근 20년 회귀선
+regression_recent = (
+    intercept_recent
+    + slope_recent * regression_x
+)
 
 
-# ---------------------------------
-# 회귀선 정보
-# ---------------------------------
+# =================================================
+# 회귀 정보
+# =================================================
+
 start_year = int(yearly["연도"].min())
 end_year = int(yearly["연도"].max())
 number_of_years = len(yearly)
 
 
-# ---------------------------------
-# 화면에 회귀 정보 표시
-# ---------------------------------
 st.subheader("📊 회귀 분석 정보")
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     st.metric(
@@ -147,16 +195,34 @@ with col3:
         f"{end_year}년"
     )
 
-with col4:
+
+# =================================================
+# 100년에 몇 도 오르는가?
+# =================================================
+
+st.subheader("🌡️ 100년에 몇 도 오르는가?")
+
+col1, col2 = st.columns(2)
+
+with col1:
     st.metric(
-        "상관계수",
-        f"{correlation:.3f}"
+        "전체 기간",
+        f"{slope_all_100:+.2f} ℃",
+        help="전체 회귀 기간을 기준으로 100년 동안 변하는 연평균기온"
+    )
+
+with col2:
+    st.metric(
+        f"최근 20년 ({recent_start_year}~{latest_year})",
+        f"{slope_recent_100:+.2f} ℃",
+        help="최근 20년의 연평균기온만 사용해 계산한 100년당 변화량"
     )
 
 
-# ---------------------------------
+# =================================================
 # 산점도 + 회귀선
-# ---------------------------------
+# =================================================
+
 st.subheader("📈 연도별 평균기온과 회귀선")
 
 fig = px.scatter(
@@ -176,18 +242,34 @@ fig = px.scatter(
     title="서울 연도별 평균기온"
 )
 
-# 회귀선 추가
+
+# 전체 기간 회귀선
 fig.add_scatter(
-    x=regression_df["연도"],
-    y=regression_df["회귀예상기온"],
+    x=regression_years,
+    y=regression_all,
     mode="lines",
-    name="회귀선",
+    name="전체 기간 회귀선",
     hovertemplate=(
         "연도: %{x}<br>"
-        "회귀 예상기온: %{y:.2f}℃"
+        "예상기온: %{y:.2f}℃"
         "<extra></extra>"
     )
 )
+
+
+# 최근 20년 회귀선
+fig.add_scatter(
+    x=regression_years,
+    y=regression_recent,
+    mode="lines",
+    name="최근 20년 회귀선",
+    hovertemplate=(
+        "연도: %{x}<br>"
+        "최근 20년 회귀 예상기온: %{y:.2f}℃"
+        "<extra></extra>"
+    )
+)
+
 
 fig.update_layout(
     xaxis=dict(
@@ -205,9 +287,35 @@ st.plotly_chart(
 )
 
 
-# ---------------------------------
+# =================================================
+# 최근 20년 비교 설명
+# =================================================
+
+st.subheader("🔎 전체 기간과 최근 20년 비교")
+
+if slope_recent_100 > slope_all_100:
+    comparison_text = (
+        "최근 20년의 100년당 기온 변화량이 "
+        "전체 기간의 변화량보다 큽니다."
+    )
+elif slope_recent_100 < slope_all_100:
+    comparison_text = (
+        "최근 20년의 100년당 기온 변화량이 "
+        "전체 기간의 변화량보다 작습니다."
+    )
+else:
+    comparison_text = (
+        "최근 20년과 전체 기간의 100년당 "
+        "기온 변화량이 같습니다."
+    )
+
+st.info(comparison_text)
+
+
+# =================================================
 # 예상 기온 슬라이더
-# ---------------------------------
+# =================================================
+
 st.subheader("🌡️ 원하는 연도의 예상 기온")
 
 selected_year = st.slider(
@@ -223,66 +331,64 @@ selected_year = st.slider(
 selected_x = selected_year - 1908
 
 predicted_temperature = (
-    intercept + slope * selected_x
+    intercept_all
+    + slope_all * selected_x
 )
 
 
-# ---------------------------------
-# 선택한 연도의 예상 기온
-# ---------------------------------
 st.markdown(
     f"### {selected_year}년 예상 연평균기온"
 )
 
 st.metric(
-    label="회귀선으로 계산한 예상 기온",
+    label="전체 기간 회귀선으로 계산한 예상 기온",
     value=f"{predicted_temperature:.2f} ℃"
 )
 
 
 # ---------------------------------
-# 선택 연도 설명
+# 실제 데이터가 있는 연도라면 비교
 # ---------------------------------
-if selected_year < start_year:
-    st.info(
-        f"{selected_year}년은 실제 회귀에 사용한 데이터의 시작 연도 "
-        f"({start_year}년)보다 이전이므로 회귀선을 이용한 예상값입니다."
+
+actual = yearly.loc[
+    yearly["연도"] == selected_year,
+    "평균기온"
+]
+
+if not actual.empty:
+
+    actual_temperature = actual.iloc[0]
+
+    st.write(
+        f"실제 {selected_year}년 연평균기온: "
+        f"**{actual_temperature:.2f} ℃**"
     )
 
-elif selected_year > end_year:
-    st.info(
-        f"{selected_year}년은 실제 회귀에 사용한 데이터의 마지막 연도 "
-        f"({end_year}년) 이후이므로 회귀선을 이용한 예상값입니다."
+    difference = (
+        predicted_temperature
+        - actual_temperature
+    )
+
+    st.write(
+        f"회귀선 예상값과 실제값의 차이: "
+        f"**{difference:+.2f} ℃**"
     )
 
 else:
-    actual = yearly.loc[
-        yearly["연도"] == selected_year,
-        "평균기온"
-    ]
 
-    if not actual.empty:
-        actual_temperature = actual.iloc[0]
-
-        st.write(
-            f"실제 {selected_year}년 연평균기온: "
-            f"**{actual_temperature:.2f} ℃**"
-        )
-
-        difference = predicted_temperature - actual_temperature
-
-        st.write(
-            f"회귀선 예상값과 실제값의 차이: "
-            f"**{difference:+.2f} ℃**"
-        )
+    st.info(
+        f"{selected_year}년은 실제 회귀 분석 데이터에 없으므로 "
+        "회귀선을 이용한 예상값만 표시합니다."
+    )
 
 
 # ---------------------------------
 # 안내
 # ---------------------------------
+
 st.divider()
 
 st.caption(
-    "※ 회귀선은 1908년을 0으로 하는 '지난 연수'를 독립 변수로 사용했습니다. "
-    "2025년까지의 데이터 중 관측일수가 300일 이상인 연도만 회귀 분석에 사용했습니다."
+    "※ 2025년까지의 데이터 중 관측일수가 300일 이상인 연도만 분석에 사용했습니다. "
+    "회귀의 독립변수는 1908년부터 지난 연수입니다."
 )
